@@ -166,6 +166,92 @@ class Session(db.Model):
     if name in self.unpicklable_names:
       self.unpicklable_names.remove(name)
 
+  def activate(self, stdout, stderr):
+    return SessionContext(self, stdout, stderr)
+
+
+class SessionContext(object):
+  """Encapsulates a session, and provides ways to execute code inside it."""
+
+  def __init__(self, session, stdout, stderr):
+    self.session = session
+    self.stdout = stdout
+    self.stderr = stderr
+
+  def __enter__(self):
+    """Deserializes and invokes this session context, substituting it for __main__.
+    
+    Returns: The module containing the reconstituted session.
+    """
+    # create a dedicated module to be used for the session's __main__.
+    self.module = new.module('__main__')
+
+    # use the current __builtin__, since it changes on each request.
+    # this is needed for import statements, among other things.
+    import __builtin__
+    self.module.__builtins__ = __builtin__
+
+    # swap in our custom module for __main__. then unpickle the session
+    # globals inside it.
+    self._old_main = sys.modules.get('__main__')
+    self._old_stdout = sys.stdout
+    self._old_stderr = sys.stderr
+    try:
+      sys.modules['__main__'] = self.module
+      sys.stdout = self.stdout
+      sys.stderr = self.stderr
+      
+      self.module.__name__ = '__main__'
+
+      # re-evaluate the unpicklables
+      for code in self.session.unpicklables:
+        exec code in self.module.__dict__
+
+      # re-initialize the globals
+      for name, val in self.session.globals_dict().items():
+        self.module.__dict__[name] = val
+
+      # run!
+      self._old_globals = dict(self.module.__dict__)
+      return self
+    except Exception:
+      self._cleanup()
+      raise
+
+  def execute(self, statement):
+    self.statement = statement
+    compiled = compile(statement, '<string>', 'single')
+    exec compiled in self.module.__dict__
+
+  def __exit__(self, exc_type, exc_value, traceback):
+    try:
+      # extract the new globals that this statement added
+      new_globals = {}
+      for name, val in self.module.__dict__.items():
+        if name not in self._old_globals or val != self._old_globals[name]:
+          new_globals[name] = val
+
+      if True in [isinstance(val, UNPICKLABLE_TYPES)
+                  for val in new_globals.values()]:
+        # this statement added an unpicklable global. store the statement and
+        # the names of all of the globals it added in the unpicklables.
+        self.session.add_unpicklable(self.statement, new_globals.keys())
+        logging.debug('Storing this statement as an unpicklable.')
+
+      else:
+        # this statement didn't add any unpicklables. pickle and store the
+        # new globals back into the datastore.
+        for name, val in new_globals.items():
+          if not name.startswith('__'):
+            self.session.set_global(name, val)
+    finally:
+      self._cleanup()
+
+  def _cleanup(self):
+    sys.stdout = self._old_stdout
+    sys.stderr = self._old_stderr
+    sys.modules['__main__'] = self._old_main
+    
 
 class FrontPageHandler(webapp.RequestHandler):
   """Creates a new session and renders the shell.html template.
@@ -215,85 +301,15 @@ class StatementHandler(webapp.RequestHandler):
     # single-line expressions such as 'class Foo: pass' evaluate happily.
     statement += '\n\n'
 
-    # log and compile the statement up front
-    try:
-      logging.info('Compiling and evaluating:\n%s' % statement)
-      compiled = compile(statement, '<string>', 'single')
-    except:
-      self.response.out.write(traceback.format_exc())
-      return
-
-    # create a dedicated module to be used as this statement's __main__
-    statement_module = new.module('__main__')
-
-    # use this request's __builtin__, since it changes on each request.
-    # this is needed for import statements, among other things.
-    import __builtin__
-    statement_module.__builtins__ = __builtin__
-
     # load the session from the datastore
     session = Session.get(self.request.get('session'))
 
-    # swap in our custom module for __main__. then unpickle the session
-    # globals, run the statement, and re-pickle the session globals, all
-    # inside it.
-    old_main = sys.modules.get('__main__')
-    try:
-      sys.modules['__main__'] = statement_module
-      statement_module.__name__ = '__main__'
-
-      # re-evaluate the unpicklables
-      for code in session.unpicklables:
-        exec code in statement_module.__dict__
-
-      # re-initialize the globals
-      for name, val in session.globals_dict().items():
-        try:
-          statement_module.__dict__[name] = val
-        except:
-          msg = 'Dropping %s since it could not be unpickled.\n' % name
-          self.response.out.write(msg)
-          logging.warning(msg + traceback.format_exc())
-          session.remove_global(name)
-
-      # run!
-      old_globals = dict(statement_module.__dict__)
+    with session.activate(self.response.out, self.response.out) as context:
       try:
-        old_stdout = sys.stdout
-        old_stderr = sys.stderr
-        try:
-          sys.stdout = self.response.out
-          sys.stderr = self.response.out
-          exec compiled in statement_module.__dict__
-        finally:
-          sys.stdout = old_stdout
-          sys.stderr = old_stderr
+        context.execute(statement)
       except:
         self.response.out.write(traceback.format_exc())
         return
-
-      # extract the new globals that this statement added
-      new_globals = {}
-      for name, val in statement_module.__dict__.items():
-        if name not in old_globals or val != old_globals[name]:
-          new_globals[name] = val
-
-      if True in [isinstance(val, UNPICKLABLE_TYPES)
-                  for val in new_globals.values()]:
-        # this statement added an unpicklable global. store the statement and
-        # the names of all of the globals it added in the unpicklables.
-        session.add_unpicklable(statement, new_globals.keys())
-        logging.debug('Storing this statement as an unpicklable.')
-
-      else:
-        # this statement didn't add any unpicklables. pickle and store the
-        # new globals back into the datastore.
-        for name, val in new_globals.items():
-          if not name.startswith('__'):
-            session.set_global(name, val)
-
-    finally:
-      sys.modules['__main__'] = old_main
 
     session.put()
 
