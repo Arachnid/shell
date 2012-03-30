@@ -50,6 +50,25 @@ class ShellTest(test_utils.DatastoreTest):
     self.assertEqual(self.execute_statement("foo['bar'] = 3"), "")
     self.assertEqual(self.execute_statement("foo"), "{'bar': 3}\n")
 
+  def testCompileError(self):
+    self.assertEqual(
+        self.execute_statement(">3"),
+        "Traceback (most recent call last):\n"
+        "  File \"/Users/nickjohnson/web/shell/shell.py\", line 221, in get\n"
+        "    compiled = compile(statement, '<string>', 'single')\n"
+        "  File \"<string>\", line 1\n"
+        "    >3\n"
+        "    ^\n"
+        "SyntaxError: invalid syntax\n")
+
+  def testRuntimeError(self):
+    self.assertEqual(
+        self.execute_statement("fnord"),
+        "Traceback (most recent call last):\n"
+        "  File \"/Users/nickjohnson/web/shell/shell.py\", line 267, in get\n"
+        "    exec compiled in statement_module.__dict__\n"
+        "  File \"<string>\", line 1, in <module>\n"
+        "NameError: name \'fnord\' is not defined\n")
 
 if __name__ == '__main__':
   unittest.main()
