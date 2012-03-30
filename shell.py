@@ -50,6 +50,8 @@ from google.appengine.ext import db
 from google.appengine.ext import webapp
 from google.appengine.ext.webapp import template
 
+from cloud import serialization
+
 
 # Set to True if stack traces should be shown in the browser, etc.
 _DEBUG = True
@@ -99,74 +101,17 @@ class Session(db.Model):
   Using Text instead of string is an optimization. We don't query on any of
   these properties, so they don't need to be indexed.
   """
-  global_names = db.ListProperty(db.Text)
-  globals = db.ListProperty(db.Blob)
-  unpicklable_names = db.ListProperty(db.Text)
-  unpicklables = db.ListProperty(db.Text)
+  state = db.BlobProperty()
 
-  def set_global(self, name, value):
-    """Adds a global, or updates it if it already exists.
+  @classmethod
+  def create(cls):
+    session = cls()
+    with session.activate() as context:
+      for line in INITIAL_UNPICKLABLES:
+        context.execute(line)
+    return session
 
-    Also removes the global from the list of unpicklable names.
-
-    Args:
-      name: the name of the global to remove
-      value: any picklable value
-    """
-    blob = db.Blob(pickle.dumps(value))
-
-    if name in self.global_names:
-      index = self.global_names.index(name)
-      self.globals[index] = blob
-    else:
-      self.global_names.append(db.Text(name))
-      self.globals.append(blob)
-
-    self.remove_unpicklable_name(name)
-
-  def remove_global(self, name):
-    """Removes a global, if it exists.
-
-    Args:
-      name: string, the name of the global to remove
-    """
-    if name in self.global_names:
-      index = self.global_names.index(name)
-      del self.global_names[index]
-      del self.globals[index]
-
-  def globals_dict(self):
-    """Returns a dictionary view of the globals.
-    """
-    return dict((name, pickle.loads(val))
-                for name, val in zip(self.global_names, self.globals))
-
-  def add_unpicklable(self, statement, names):
-    """Adds a statement and list of names to the unpicklables.
-
-    Also removes the names from the globals.
-
-    Args:
-      statement: string, the statement that created new unpicklable global(s).
-      names: list of strings; the names of the globals created by the statement.
-    """
-    self.unpicklables.append(db.Text(statement))
-
-    for name in names:
-      self.remove_global(name)
-      if name not in self.unpicklable_names:
-        self.unpicklable_names.append(db.Text(name))
-
-  def remove_unpicklable_name(self, name):
-    """Removes a name from the list of unpicklable names, if it exists.
-
-    Args:
-      name: string, the name of the unpicklable global to remove
-    """
-    if name in self.unpicklable_names:
-      self.unpicklable_names.remove(name)
-
-  def activate(self, stdout, stderr):
+  def activate(self, stdout=None, stderr=None):
     return SessionContext(self, stdout, stderr)
 
 
@@ -183,8 +128,12 @@ class SessionContext(object):
     
     Returns: The module containing the reconstituted session.
     """
-    # create a dedicated module to be used for the session's __main__.
-    self.module = new.module('__main__')
+    if self.session.state:
+      # deserialize the module's dict
+      self.module = serialization.deserialize(self.session.state)
+    else:
+      # create a dedicated module to be used for the session's __main__.
+      self.module = new.module('__main__')
 
     # use the current __builtin__, since it changes on each request.
     # this is needed for import statements, among other things.
@@ -198,21 +147,14 @@ class SessionContext(object):
     self._old_stderr = sys.stderr
     try:
       sys.modules['__main__'] = self.module
-      sys.stdout = self.stdout
-      sys.stderr = self.stderr
+      if self.stdout:
+        sys.stdout = self.stdout
+      if self.stderr:
+        sys.stderr = self.stderr
       
       self.module.__name__ = '__main__'
 
-      # re-evaluate the unpicklables
-      for code in self.session.unpicklables:
-        exec code in self.module.__dict__
-
-      # re-initialize the globals
-      for name, val in self.session.globals_dict().items():
-        self.module.__dict__[name] = val
-
       # run!
-      self._old_globals = dict(self.module.__dict__)
       return self
     except Exception:
       self._cleanup()
@@ -225,25 +167,7 @@ class SessionContext(object):
 
   def __exit__(self, exc_type, exc_value, traceback):
     try:
-      # extract the new globals that this statement added
-      new_globals = {}
-      for name, val in self.module.__dict__.items():
-        if name not in self._old_globals or val != self._old_globals[name]:
-          new_globals[name] = val
-
-      if True in [isinstance(val, UNPICKLABLE_TYPES)
-                  for val in new_globals.values()]:
-        # this statement added an unpicklable global. store the statement and
-        # the names of all of the globals it added in the unpicklables.
-        self.session.add_unpicklable(self.statement, new_globals.keys())
-        logging.debug('Storing this statement as an unpicklable.')
-
-      else:
-        # this statement didn't add any unpicklables. pickle and store the
-        # new globals back into the datastore.
-        for name, val in new_globals.items():
-          if not name.startswith('__'):
-            self.session.set_global(name, val)
+      self.session.state = serialization.serialize(self.module, needsPyCloudSerializer=True)
     finally:
       self._cleanup()
 
@@ -264,8 +188,7 @@ class FrontPageHandler(webapp.RequestHandler):
       session = Session.get(session_key)
     else:
       # create a new session
-      session = Session()
-      session.unpicklables = [db.Text(line) for line in INITIAL_UNPICKLABLES]
+      session = Session.create()
       session_key = session.put()
 
     template_file = os.path.join(os.path.dirname(__file__), 'templates',
