@@ -36,6 +36,8 @@ your app.yaml.
 TODO: unit tests!
 """
 
+import cPickle
+import cStringIO
 import logging
 import new
 import os
@@ -50,7 +52,7 @@ from google.appengine.ext import db
 from google.appengine.ext import webapp
 from google.appengine.ext.webapp import template
 
-from cloud import serialization
+from cloud.serialization import cloudpickle
 
 
 # Set to True if stack traces should be shown in the browser, etc.
@@ -76,6 +78,15 @@ INITIAL_UNPICKLABLES = [
   'from google.appengine.api import users',
   'class Foo(db.Expando):\n  pass',
   ]
+
+
+def dumps(obj):
+  s = cStringIO.StringIO()
+  pickler = cloudpickle.CloudPickler(s)
+  pickler.dump(obj)
+  return s.getvalue()
+
+loads = cPickle.loads
 
 
 class Session(db.Model):
@@ -130,7 +141,7 @@ class SessionContext(object):
     """
     if self.session.state:
       # deserialize the module's dict
-      self.module = serialization.deserialize(self.session.state)
+      self.module = loads(self.session.state)
     else:
       # create a dedicated module to be used for the session's __main__.
       self.module = new.module('__main__')
@@ -167,7 +178,7 @@ class SessionContext(object):
 
   def __exit__(self, exc_type, exc_value, traceback):
     try:
-      self.session.state = serialization.serialize(self.module, needsPyCloudSerializer=True)
+      self.session.state = dumps(self.module)
     finally:
       self._cleanup()
 
