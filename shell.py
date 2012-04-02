@@ -38,10 +38,12 @@ TODO: unit tests!
 
 import cPickle
 import cStringIO
+import json
 import logging
 import new
 import os
 import pickle
+import pydoc
 import sys
 import traceback
 import types
@@ -219,9 +221,20 @@ class FrontPageHandler(webapp.RequestHandler):
 class StatementHandler(webapp.RequestHandler):
   """Evaluates a python statement in a given session and returns the result.
   """
+  
+  def write_json(self, result, symbols=None):
+    if symbols is None: symbols = {}
+    self.response.out.write(json.dumps({
+      'result': result,
+      'symbols': symbols,
+    }))
+
+  def generate_docstrings(self, module):
+    doc = pydoc.HTMLDoc()
+    return dict((k, doc.document(v)) for k, v in module.__dict__.iteritems() if not isinstance(v, types.ModuleType))
 
   def get(self):
-    self.response.headers['Content-Type'] = 'text/plain'
+    self.response.headers['Content-Type'] = 'application/json'
 
     # extract the statement to be run
     statement = self.request.get('statement')
@@ -238,11 +251,13 @@ class StatementHandler(webapp.RequestHandler):
     # load the session from the datastore
     session = Session.get(self.request.get('session'))
 
-    with session.activate(self.response.out, self.response.out) as context:
+    output = cStringIO.StringIO()
+    with session.activate(output, output) as context:
       try:
         context.execute(statement)
+        self.write_json(output.getvalue(), self.generate_docstrings(context.module))
       except:
-        self.response.out.write(traceback.format_exc())
+        self.write_json(traceback.format_exc())
         return
 
     session.put()

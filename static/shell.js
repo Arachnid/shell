@@ -123,33 +123,40 @@ shell.onPromptKeyPress = function(event) {
  * @param {XmlHttpRequest} req the XmlHttpRequest we used to send the current
  *     statement to the server
  */
-shell.done = function(req) {
-  if (req.readyState == this.DONE_STATE) {
-    var statement = document.getElementById('statement')
-    statement.className = 'prompt';
+shell.done = function(data) {
+  var statement = document.getElementById('statement')
+  statement.className = 'prompt';
 
-    // add the command to the shell output
-    var output = document.getElementById('output');
+  // add the command to the shell output
+  var output = document.getElementById('output');
 
-    output.value += '\n>>> ' + statement.value;
-    statement.value = '';
+  output.value += '\n>>> ' + statement.value;
+  statement.value = '';
 
-    // add a new history element
-    this.history.push('');
-    this.historyCursor = this.history.length - 1;
+  // add a new history element
+  this.history.push('');
+  this.historyCursor = this.history.length - 1;
 
-    // add the command's result
-    var result = req.responseText.replace(/^\s*|\s*$/g, '');  // trim whitespace
-    if (result != '')
-      output.value += '\n' + result;
+  // add the command's result
+  var result = data['result'].replace(/^\s*|\s*$/g, '');  // trim whitespace
+  if (result != '')
+    output.value += '\n' + result;
 
-    // scroll to the bottom
-    output.scrollTop = output.scrollHeight;
-    if (output.createTextRange) {
-      var range = output.createTextRange();
-      range.collapse(false);
-      range.select();
-    }
+  // scroll to the bottom
+  output.scrollTop = output.scrollHeight;
+  if (output.createTextRange) {
+    var range = output.createTextRange();
+    range.collapse(false);
+    range.select();
+  }
+  
+  var inspector = $("#inspector");
+  inspector.children().remove();
+  for(var key in data['symbols']) {
+    $("<h3></h3>").append($('<a></a>', {'href': '#', 'text': key})).click(function() {
+      $(this).next().toggle('slow');
+    }).appendTo(inspector);
+    $("<div></div>").append(data['symbols'][key]).hide().appendTo(inspector);
   }
 };
 
@@ -161,16 +168,6 @@ shell.done = function(req) {
  */
 shell.runStatement = function() {
   var form = document.getElementById('form');
-
-  // build a XmlHttpRequest
-  var req = this.getXmlHttpRequest();
-  if (!req) {
-    document.getElementById('ajax-status').innerHTML =
-        "<span class='error'>Your browser doesn't support AJAX. :(</span>";
-    return false;
-  }
-
-  req.onreadystatechange = function() { shell.done(req); };
 
   // build the query parameter string
   var params = '';
@@ -184,10 +181,7 @@ shell.runStatement = function() {
 
   // send the request and tell the user.
   document.getElementById('statement').className = 'prompt processing';
-  req.open(form.method, form.action + '?' + params, true);
-  req.setRequestHeader('Content-type',
-                       'application/x-www-form-urlencoded;charset=UTF-8');
-  req.send(null);
+  $.getJSON(form.action + '?' + params, function(result) { shell.done(result); });
 
   return false;
 };
