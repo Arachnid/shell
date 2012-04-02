@@ -22,7 +22,6 @@ http://www.gnu.org/licenses/lgpl-2.1.html
 
 import sys
 import types
-import ctypes
 import cPickle
 import inspect
 from functools import partial

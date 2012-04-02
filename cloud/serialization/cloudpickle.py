@@ -28,7 +28,6 @@ http://www.gnu.org/licenses/lgpl-2.1.html
 """
 
 
-import ctypes
 import os
 import pickle
 import struct
@@ -789,16 +788,18 @@ def _fill_function(func, globals, defaults, closure, dict):
             
     return func
 
+def _make_cell():
+  def f(): return cell
+  return f.func_closure[0]
+  cell = None
+
 def _make_skel_func(code, num_closures):
     """ Creates a skeleton function object that contains just the provided
         code and the correct number of cells in func_closure.  All other
         func attributes (e.g. func_globals) are empty.
     """
     #build closure (cells):
-    cellnew = ctypes.pythonapi.PyCell_New
-    cellnew.restype = ctypes.py_object
-    cellnew.argtypes = (ctypes.py_object,)
-    dummy_closure = tuple(map(lambda i: cellnew(None), range(num_closures)))
+    dummy_closure = tuple(map(lambda i: _make_cell(), range(num_closures)))
             
     return types.FunctionType(code, {'__builtins__': __builtins__}, 
                               None, None, dummy_closure)
