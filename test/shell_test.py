@@ -1,6 +1,7 @@
 from test import test_utils
 test_utils.setup()
 
+import json
 import unittest
 import urllib
 from google.appengine.ext import webapp
@@ -27,7 +28,8 @@ class ShellTest(test_utils.DatastoreTest):
     handler = shell.StatementHandler()
     handler.initialize(request, response)
     handler.get()
-    return response.out.getvalue()
+    response_data = json.loads(response.out.getvalue())
+    return response_data['result']
 
   def testSimpleStatements(self):
     self.assertEqual(self.execute_statement("print 5"), "5\n")

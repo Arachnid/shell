@@ -3,8 +3,8 @@
 <head>
 <meta http-equiv="content-type" content="text/html; charset=utf-8" />
 <title> Interactive Shell </title>
-<script type="text/javascript" src="http://ajax.googleapis.com/ajax/libs/jquery/1.7.1/jquery.min.js"></script>
-<script type="text/javascript" src="https://ajax.googleapis.com/ajax/libs/jqueryui/1.8.18/jquery-ui.min.js"></script>
+<script type="text/javascript" src="/static/jquery-1.4.2.min.js"></script>
+<!--<script type="text/javascript" src="https://ajax.googleapis.com/ajax/libs/jqueryui/1.8.18/jquery-ui.min.js"></script>-->
 <script type="text/javascript" src="/static/shell.js"></script>
 <link rel="stylesheet" href="/static/css/bootstrap.min.css" />
 <style type="text/css">
@@ -77,6 +77,18 @@ a img {
   font-weight: bold;
 }
 
+#inspector dt {
+	font-weight: normal;
+}
+
+.value {
+	display: block;
+	width: 5em;
+	float: right;
+	font-size: 10pt;
+	clear: both;
+}
+
 </style>
 </head>
 
@@ -111,7 +123,7 @@ a img {
 	  <textarea class="prompt" name="statement" id="statement" rows="4"
 	            onkeypress="return shell.onPromptKeyPress(event);"></textarea>
 	  </nobr>
-	  <input type="hidden" name="session" value="{{ session }}" />
+	  <input type="hidden" name="session" id="session" value="{{ session }}" />
 	  <input type="submit" style="display: none" />
 	</form>
 

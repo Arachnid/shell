@@ -43,7 +43,6 @@ import logging
 import new
 import os
 import pickle
-import pydoc
 import sys
 import traceback
 import types
@@ -125,7 +124,16 @@ class Session(db.Model):
     return session
 
   def activate(self, stdout=None, stderr=None):
+    self._module = None
     return SessionContext(self, stdout, stderr)
+
+  @property
+  def module(self):
+    if not hasattr(self, '_module'):
+      out = cStringIO.StringIO()
+      with self.activate(out, out):
+        pass
+    return self._module
 
 
 class SessionContext(object):
@@ -141,17 +149,18 @@ class SessionContext(object):
     
     Returns: The module containing the reconstituted session.
     """
-    if self.session.state:
-      # deserialize the module's dict
-      self.module = loads(self.session.state)
-    else:
-      # create a dedicated module to be used for the session's __main__.
-      self.module = new.module('__main__')
+    if not self.session.module:
+      if self.session.state:
+        # deserialize the module's dict
+        self.session._module = loads(self.session.state)
+      else:
+        # create a dedicated module to be used for the session's __main__.
+        self.session._module = new.module('__main__')
 
     # use the current __builtin__, since it changes on each request.
     # this is needed for import statements, among other things.
     import __builtin__
-    self.module.__builtins__ = __builtin__
+    self.session._module.__builtins__ = __builtin__
 
     # swap in our custom module for __main__. then unpickle the session
     # globals inside it.
@@ -159,13 +168,13 @@ class SessionContext(object):
     self._old_stdout = sys.stdout
     self._old_stderr = sys.stderr
     try:
-      sys.modules['__main__'] = self.module
+      sys.modules['__main__'] = self.session._module
       if self.stdout:
         sys.stdout = self.stdout
       if self.stderr:
         sys.stderr = self.stderr
       
-      self.module.__name__ = '__main__'
+      self.session._module.__name__ = '__main__'
 
       # run!
       return self
@@ -176,11 +185,11 @@ class SessionContext(object):
   def execute(self, statement):
     self.statement = statement
     compiled = compile(statement, '<string>', 'single')
-    exec compiled in self.module.__dict__
+    exec compiled in self.session._module.__dict__
 
   def __exit__(self, exc_type, exc_value, traceback):
     try:
-      self.session.state = dumps(self.module)
+      self.session.state = dumps(self.session._module)
     finally:
       self._cleanup()
 
@@ -217,6 +226,25 @@ class FrontPageHandler(webapp.RequestHandler):
     rendered = template.render(template_file, vars, debug=_DEBUG)
     self.response.out.write(unicode(rendered))
 
+def get_symbol_data(o):
+  return dict(
+    (k, repr(getattr(o, k))) for k in dir(o)
+  )
+
+
+class SymbolHandler(webapp.RequestHandler):
+  def get(self):
+    ref = self.request.get('ref').strip('.')
+    session = Session.get(self.request.get('session'))
+    
+    o = session.module
+    for part in ref.split('.'):
+      o = getattr(o, part)
+    symbols = get_symbol_data(o)
+    
+    self.response.headers['Content-Type'] = 'application/json'
+    self.response.out.write(json.dumps(symbols))
+
 
 class StatementHandler(webapp.RequestHandler):
   """Evaluates a python statement in a given session and returns the result.
@@ -228,10 +256,6 @@ class StatementHandler(webapp.RequestHandler):
       'result': result,
       'symbols': symbols,
     }))
-
-  def generate_docstrings(self, module):
-    doc = pydoc.HTMLDoc()
-    return dict((k, doc.document(v)) for k, v in module.__dict__.iteritems() if not isinstance(v, types.ModuleType))
 
   def get(self):
     self.response.headers['Content-Type'] = 'application/json'
@@ -255,7 +279,7 @@ class StatementHandler(webapp.RequestHandler):
     with session.activate(output, output) as context:
       try:
         context.execute(statement)
-        self.write_json(output.getvalue(), self.generate_docstrings(context.module))
+        self.write_json(output.getvalue(), get_symbol_data(session.module))
       except:
         self.write_json(traceback.format_exc())
         return
@@ -266,7 +290,8 @@ class StatementHandler(webapp.RequestHandler):
 def main():
   application = webapp.WSGIApplication(
     [('/', FrontPageHandler),
-     ('/shell.do', StatementHandler)], debug=_DEBUG)
+     ('/shell.do', StatementHandler),
+     ('/symbols', SymbolHandler)], debug=_DEBUG)
   wsgiref.handlers.CGIHandler().run(application)
 
 

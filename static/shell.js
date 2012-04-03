@@ -116,6 +116,28 @@ shell.onPromptKeyPress = function(event) {
   }
 };
 
+shell.inspector_fetch = function(elt, path) {
+  return function() {
+    var session = $("#session").val();
+    $.getJSON("/symbols?session=" + session + "&ref=" + path, function(result) {
+      shell.populate_inspector(elt.next(), path, result)
+    });
+  };
+}
+
+shell.populate_inspector = function(elt, path, data) {
+  dl = $("<dl></dl>");
+  dl.appendTo(elt);
+  for(var key in data) {
+    var dt = $("<dt></dt>");
+    dt.text(key)
+      //.append($('<span class="value"></span>').text(data[key]))
+      .click(shell.inspector_fetch(dt, path + "." + key))
+      .appendTo(dl);
+    $("<dd></dd>").appendTo(dl);
+  }
+}
+
 /**
  * The XmlHttpRequest callback. If the request succeeds, it adds the command
  * and its resulting output to the shell history div.
@@ -152,12 +174,7 @@ shell.done = function(data) {
   
   var inspector = $("#inspector");
   inspector.children().remove();
-  for(var key in data['symbols']) {
-    $("<h3></h3>").append($('<a></a>', {'href': '#', 'text': key})).click(function() {
-      $(this).next().toggle('slow');
-    }).appendTo(inspector);
-    $("<div></div>").append(data['symbols'][key]).hide().appendTo(inspector);
-  }
+  this.populate_inspector(inspector, "", data['symbols']);
 };
 
 /**
