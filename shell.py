@@ -229,6 +229,7 @@ class FrontPageHandler(webapp.RequestHandler):
 def get_symbol_data(o):
   return dict(
     (k, repr(getattr(o, k))) for k in dir(o)
+    if not k.startswith('__')
   )
 
 
