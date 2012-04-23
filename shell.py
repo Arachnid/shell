@@ -150,12 +150,12 @@ class SessionContext(object):
     Returns: The module containing the reconstituted session.
     """
     if not self.session.module:
+      # create a dedicated module to be used for the session's __main__.
+      self.session._module = new.module('__main__')
+      
       if self.session.state:
         # deserialize the module's dict
-        self.session._module = loads(self.session.state)
-      else:
-        # create a dedicated module to be used for the session's __main__.
-        self.session._module = new.module('__main__')
+        self.session._module.__dict__.update(loads(self.session.state))
 
     # use the current __builtin__, since it changes on each request.
     # this is needed for import statements, among other things.
@@ -189,7 +189,7 @@ class SessionContext(object):
 
   def __exit__(self, exc_type, exc_value, traceback):
     try:
-      self.session.state = dumps(self.session._module)
+      self.session.state = dumps(self.session._module.__dict__)
     finally:
       self._cleanup()
 

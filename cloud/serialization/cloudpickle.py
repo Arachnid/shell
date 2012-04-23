@@ -384,7 +384,7 @@ class CloudPickler(pickle.Pickler):
                     raise
                             
         except (ImportError, KeyError, AttributeError):                
-            if typ == types.TypeType or typ == types.ClassType:
+            if isinstance(obj, types.TypeType) or isinstance(obj, types.ClassType):
                 sendRef = False
             else: #we can't deal with this
                 raise
