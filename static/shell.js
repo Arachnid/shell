@@ -94,12 +94,12 @@ shell.onPromptKeyPress = function(event) {
   }
 
   // should we pull something from the history?
-  if (event.ctrlKey && event.keyCode == 38 /* up arrow */) {
+  if ((event.ctrlKey && event.keyCode == 38) || event.keyCode == 63232 /* up arrow */) {
     if (this.historyCursor > 0) {
       statement.value = this.history[--this.historyCursor];
     }
     return false;
-  } else if (event.ctrlKey && event.keyCode == 40 /* down arrow */) {
+  } else if ((event.ctrlKey && event.keyCode == 40) || event.keyCode == 63233 /* down arrow */) {
     if (this.historyCursor < this.history.length - 1) {
       statement.value = this.history[++this.historyCursor];
     }
